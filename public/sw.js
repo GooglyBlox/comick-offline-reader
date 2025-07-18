@@ -3,7 +3,6 @@ const CACHE_NAME = "comick-offline-v1.7";
 const urlsToCache = [
   "/",
   "/settings",
-  "/offline",
   "/offline.html",
   "/manifest.json",
   "/icon-192x192.png",

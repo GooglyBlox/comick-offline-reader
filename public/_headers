@@ -9,3 +9,6 @@
 
 /manifest.json
   Cache-Control: public, max-age=3600
+
+/offline.html
+  Cache-Control: public, max-age=3600
