@@ -2,6 +2,7 @@ import type { Metadata, Viewport } from "next";
 import "./globals.css";
 import ServiceWorkerRegistration from "@/components/ServiceWorkerRegistration";
 import { DeviceWarning } from "@/components/DeviceWarning";
+import { DonationModal } from "@/components/DonationModal";
 
 export const metadata: Metadata = {
   title: "Comick Offline Reader",
@@ -50,6 +51,7 @@ export default function RootLayout({
       <body className="antialiased bg-slate-950 min-h-screen overflow-x-hidden touch-manipulation">
         <ServiceWorkerRegistration />
         <DeviceWarning />
+        <DonationModal />
         {children}
       </body>
     </html>
