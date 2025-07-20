@@ -6,22 +6,28 @@ import { Smartphone, Monitor, X, Tablet } from "lucide-react";
 export function DeviceWarning() {
   const [showWarning, setShowWarning] = useState(false);
   const [isDismissed, setIsDismissed] = useState(false);
-  const [isVisible, setIsVisible] = useState(false);
+  const [mounted, setMounted] = useState(false);
 
   useEffect(() => {
+    setMounted(true);
+  }, []);
+
+  useEffect(() => {
+    if (!mounted) return;
+
     const checkScreenSize = () => {
       const isLargeScreen = window.innerWidth > 1024;
       setShowWarning(isLargeScreen && !isDismissed);
-
-      if (isLargeScreen && !isDismissed) {
-        setTimeout(() => setIsVisible(true), 100);
-      }
     };
 
     const handleStoredDismissal = () => {
-      const dismissed = localStorage.getItem("device-warning-dismissed");
-      if (dismissed === "true") {
-        setIsDismissed(true);
+      try {
+        const dismissed = localStorage.getItem("device-warning-dismissed");
+        if (dismissed === "true") {
+          setIsDismissed(true);
+        }
+      } catch {
+        // Ignore localStorage errors
       }
     };
 
@@ -30,107 +36,94 @@ export function DeviceWarning() {
 
     window.addEventListener("resize", checkScreenSize);
     return () => window.removeEventListener("resize", checkScreenSize);
-  }, [isDismissed]);
+  }, [mounted, isDismissed]);
 
   const handleDismiss = () => {
-    setIsVisible(false);
-    setTimeout(() => {
-      setIsDismissed(true);
-      setShowWarning(false);
+    setIsDismissed(true);
+    setShowWarning(false);
+    try {
       localStorage.setItem("device-warning-dismissed", "true");
-    }, 300);
+    } catch {
+      // Ignore localStorage errors
+    }
   };
 
-  if (!showWarning) return null;
+  if (!mounted || !showWarning) return null;
 
   return (
-    <div
-      className={`fixed inset-0 bg-black/80 backdrop-blur-md flex items-center justify-center z-[9999] p-6 transition-all duration-500 ${
-        isVisible ? "opacity-100" : "opacity-0"
-      }`}
-    >
-      <div
-        className={`relative bg-slate-900/95 backdrop-blur-xl border border-slate-700/50 rounded-3xl max-w-lg w-full shadow-2xl transition-all duration-500 ${
-          isVisible ? "scale-100 translate-y-0" : "scale-95 translate-y-8"
-        }`}
-      >
-        <div className="absolute inset-0 rounded-3xl overflow-hidden">
-          <div className="absolute top-0 left-0 w-32 h-32 bg-blue-500/5 rounded-full -translate-x-16 -translate-y-16"></div>
-          <div className="absolute bottom-0 right-0 w-40 h-40 bg-purple-500/5 rounded-full translate-x-20 translate-y-20"></div>
-        </div>
-
-        <div className="relative p-8">
-          <div className="flex items-start justify-between mb-8">
-            <div className="flex-1">
-              <div className="inline-flex items-center justify-center w-16 h-16 bg-amber-500/20 border border-amber-500/30 rounded-2xl mb-4">
-                <Monitor size={28} className="text-amber-400" />
-              </div>
-              <h2 className="text-3xl font-bold text-white mb-2 tracking-tight">
+    <div className="fixed inset-0 bg-black/90 flex items-end sm:items-center justify-center z-[9999] p-4">
+      <div className="bg-slate-900 border border-slate-700 rounded-t-xl sm:rounded-xl w-full max-w-lg">
+        <div className="flex items-center justify-between p-6 border-b border-slate-700">
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 bg-amber-600 rounded-lg flex items-center justify-center">
+              <Monitor size={20} className="text-white" />
+            </div>
+            <div>
+              <h2 className="text-xl font-bold text-white">
                 Mobile Experience
               </h2>
-              <p className="text-slate-400 text-sm">
+              <p className="text-sm text-slate-400">
                 Best viewed on smaller screens
               </p>
             </div>
+          </div>
+          <button
+            onClick={handleDismiss}
+            className="p-2 text-slate-400 hover:text-white rounded-lg hover:bg-slate-800 transition-colors"
+          >
+            <X size={20} />
+          </button>
+        </div>
 
+        <div className="p-6 space-y-6">
+          <p className="text-slate-300 leading-relaxed">
+            This manga reader is designed for mobile devices and tablets. Touch
+            gestures, reading flow, and interface elements are optimized for
+            smaller screens.
+          </p>
+
+          <div className="bg-slate-800 border border-slate-600 rounded-lg p-4">
+            <div className="grid grid-cols-3 gap-4 text-center">
+              <div className="space-y-2">
+                <div className="w-8 h-8 bg-emerald-600 rounded-lg flex items-center justify-center mx-auto">
+                  <Smartphone size={16} className="text-white" />
+                </div>
+                <div className="text-emerald-400 text-sm font-medium">
+                  Perfect
+                </div>
+              </div>
+
+              <div className="space-y-2">
+                <div className="w-8 h-8 bg-blue-600 rounded-lg flex items-center justify-center mx-auto">
+                  <Tablet size={16} className="text-white" />
+                </div>
+                <div className="text-blue-400 text-sm font-medium">Great</div>
+              </div>
+
+              <div className="space-y-2">
+                <div className="w-8 h-8 bg-slate-600 rounded-lg flex items-center justify-center mx-auto">
+                  <Monitor size={16} className="text-white" />
+                </div>
+                <div className="text-slate-500 text-sm font-medium">
+                  Limited
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div className="space-y-3">
             <button
               onClick={handleDismiss}
-              className="p-2 text-slate-500 hover:text-white hover:bg-slate-800/50 rounded-xl transition-all duration-200"
+              className="w-full bg-blue-600 hover:bg-blue-700 text-white py-4 px-6 rounded-lg font-medium transition-colors"
             >
-              <X size={20} />
+              Continue on Desktop
             </button>
           </div>
 
-          <div className="space-y-6">
-            <p className="text-slate-300 text-lg leading-relaxed">
-              This manga reader is made for mobile devices and tablets. Touch
-              gestures, reading flow, and interface elements are optimized for
-              smaller screens.
-            </p>
-
-            <div className="flex items-center justify-center gap-6 py-6">
-              <div className="flex flex-col items-center gap-3">
-                <div className="p-4 bg-emerald-500/20 border border-emerald-500/30 rounded-2xl">
-                  <Smartphone size={24} className="text-emerald-400" />
-                </div>
-                <span className="text-emerald-300 text-sm font-medium">
-                  Perfect
-                </span>
-              </div>
-
-              <div className="flex flex-col items-center gap-3">
-                <div className="p-4 bg-blue-500/20 border border-blue-500/30 rounded-2xl">
-                  <Tablet size={24} className="text-blue-400" />
-                </div>
-                <span className="text-blue-300 text-sm font-medium">Great</span>
-              </div>
-
-              <div className="flex flex-col items-center gap-3">
-                <div className="p-4 bg-slate-600/20 border border-slate-600/30 rounded-2xl">
-                  <Monitor size={24} className="text-slate-500" />
-                </div>
-                <span className="text-slate-500 text-sm font-medium">
-                  Limited
-                </span>
-              </div>
-            </div>
-
-            <div className="space-y-3 pt-2">
-              <button
-                onClick={handleDismiss}
-                className="w-full bg-blue-600 hover:bg-blue-700 active:bg-blue-800 text-white py-4 rounded-2xl font-semibold transition-all duration-200 transform hover:scale-[1.02] active:scale-[0.98]"
-              >
-                Continue on Desktop
-              </button>
-
-              <div className="text-center">
-                <p className="text-xs text-slate-500 leading-relaxed">
-                  Some features like touch gestures and mobile-optimized layouts
-                  may not work as intended on larger screens
-                </p>
-              </div>
-            </div>
-          </div>
+          <p className="text-xs text-slate-500 text-center">
+            Some features like touch gestures and mobile-optimized layouts may
+            not work as intended on larger screens.
+          </p>
         </div>
       </div>
     </div>
