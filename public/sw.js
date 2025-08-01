@@ -1,4 +1,4 @@
-const CACHE_NAME = "comick-offline-v1.7";
+const CACHE_NAME = "comick-offline-v1.8";
 
 const urlsToCache = [
   "/",

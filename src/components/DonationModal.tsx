@@ -19,7 +19,7 @@ export function DonationModal() {
       try {
         const currentVersion = "2025-07";
         const dismissedVersion = localStorage.getItem(
-          "donation-modal-dismissed-version"
+          "donation-modal-dismissed-version",
         );
 
         const shouldShow = dismissedVersion !== currentVersion;
@@ -52,7 +52,7 @@ export function DonationModal() {
     window.open(
       "https://ko-fi.com/googlyblox",
       "_blank",
-      "noopener,noreferrer"
+      "noopener,noreferrer",
     );
     handleDismiss();
   };

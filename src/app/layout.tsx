@@ -3,6 +3,7 @@ import "./globals.css";
 import ServiceWorkerRegistration from "@/components/ServiceWorkerRegistration";
 import { DeviceWarning } from "@/components/DeviceWarning";
 import { DonationModal } from "@/components/DonationModal";
+import { CacheInvalidationBanner } from "@/components/CacheInvalidationBanner";
 
 export const metadata: Metadata = {
   title: "Comick Offline Reader",
@@ -50,6 +51,7 @@ export default function RootLayout({
       </head>
       <body className="antialiased bg-slate-950 min-h-screen overflow-x-hidden touch-manipulation">
         <ServiceWorkerRegistration />
+        <CacheInvalidationBanner />
         <DeviceWarning />
         <DonationModal />
         {children}
