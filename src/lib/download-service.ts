@@ -72,12 +72,15 @@ function getTranslatorName(chapter: Chapter): string {
 export class DownloadService {
   private onProgress?: (progress: DownloadProgressState) => void;
   private downloadConfig: ConcurrentDownloadConfig = {
-    maxConcurrent: 8,
+    maxConcurrent: 6,
     retryAttempts: 3,
     retryDelay: 1000,
-    batchSize: 50,
+    batchSize: 40,
   };
   private cancelled = false;
+  private activeRequests = new Set<AbortController>();
+  private connectionResetCounter = 0;
+  private networkHealthy = true;
 
   constructor(onProgress?: (progress: DownloadProgressState) => void) {
     this.onProgress = onProgress;
@@ -85,6 +88,48 @@ export class DownloadService {
 
   cancel(): void {
     this.cancelled = true;
+
+    this.activeRequests.forEach((controller) => {
+      controller.abort();
+    });
+    this.activeRequests.clear();
+  }
+
+  private async resetNetworkConnections(): Promise<void> {
+    this.activeRequests.forEach((controller) => {
+      controller.abort();
+    });
+    this.activeRequests.clear();
+
+    await this.sleep(1000);
+
+    this.connectionResetCounter = 0;
+    this.networkHealthy = true;
+
+    console.log("Network connections reset");
+  }
+
+  private async checkNetworkHealth(): Promise<boolean> {
+    try {
+      const healthCheck = await fetch(
+        `https://meo.comick.pictures/health-check-${Date.now()}`,
+        {
+          method: "HEAD",
+          cache: "no-cache",
+          headers: {
+            "Cache-Control": "no-cache",
+            Pragma: "no-cache",
+          },
+          signal: AbortSignal.timeout(5000),
+        }
+      );
+
+      this.networkHealthy = healthCheck.ok || healthCheck.status === 404;
+      return this.networkHealthy;
+    } catch {
+      this.networkHealthy = false;
+      return false;
+    }
   }
 
   async getTranslatorInfo(slug: string): Promise<TranslatorInfo[]> {
@@ -92,13 +137,13 @@ export class DownloadService {
       const comicResponse = await fetch(`/api/comic/${slug}`);
       if (!comicResponse.ok) {
         throw new Error(
-          `Failed to fetch comic information: ${comicResponse.status}`,
+          `Failed to fetch comic information: ${comicResponse.status}`
         );
       }
       const comicInfo: ComicInfo = await comicResponse.json();
 
       const chaptersResponse = await fetch(
-        `/api/chapters/${comicInfo.comic.hid}?limit=1000`,
+        `/api/chapters/${comicInfo.comic.hid}?limit=1000`
       );
       if (!chaptersResponse.ok) {
         throw new Error(`Failed to fetch chapters: ${chaptersResponse.status}`);
@@ -107,7 +152,7 @@ export class DownloadService {
       const chapters: Chapter[] = chaptersData.chapters || [];
 
       const englishChapters = chapters.filter(
-        (chapter) => chapter.lang === "en",
+        (chapter) => chapter.lang === "en"
       );
 
       const translatorMap = new Map<string, number[]>();
@@ -143,14 +188,12 @@ export class DownloadService {
 
   async checkExistingSeries(slug: string): Promise<LocalSeries | null> {
     try {
-      // First get comic info to get the hid
       const comicResponse = await fetch(`/api/comic/${slug}`);
       if (!comicResponse.ok) {
         return null;
       }
       const comicInfo: ComicInfo = await comicResponse.json();
 
-      // Check if series exists by hid
       const existingSeries = await getSeries(comicInfo.comic.hid);
       return existingSeries || null;
     } catch (error) {
@@ -166,9 +209,8 @@ export class DownloadService {
         return null;
       }
 
-      // Get available chapters
       const chaptersResponse = await fetch(
-        `/api/chapters/${existingSeries.hid}?limit=1000`,
+        `/api/chapters/${existingSeries.hid}?limit=1000`
       );
       if (!chaptersResponse.ok) {
         return null;
@@ -180,30 +222,28 @@ export class DownloadService {
         .filter((chapter) => chapter.lang === "en")
         .sort((a, b) => parseFloat(a.chap) - parseFloat(b.chap));
 
-      // Get existing chapters
       const existingChapters = await getChaptersBySeriesId(existingSeries.id);
       const existingChapterNumbers = new Set(
-        existingChapters.map((ch) => parseFloat(ch.chapterNumber)),
+        existingChapters.map((ch) => parseFloat(ch.chapterNumber))
       );
 
-      // Find chapters to download using existing preferences
       const allAvailableChapters = this.selectChaptersToDownload(
         englishChapters,
-        existingSeries.translatorPreferences,
+        existingSeries.translatorPreferences
       );
 
       const remainingChapters = allAvailableChapters.filter(
-        (ch) => !existingChapterNumbers.has(parseFloat(ch.chap)),
+        (ch) => !existingChapterNumbers.has(parseFloat(ch.chap))
       );
 
       if (remainingChapters.length === 0) {
-        return null; // No new chapters to download
+        return null;
       }
 
       return {
         seriesId: existingSeries.id,
         completedChapters: Array.from(existingChapterNumbers).sort(
-          (a, b) => a - b,
+          (a, b) => a - b
         ),
         remainingChapters,
         translatorPreferences: existingSeries.translatorPreferences,
@@ -260,34 +300,69 @@ export class DownloadService {
   private async downloadImageWithRetry(
     b2key: string,
     imageId: string,
-    retryCount = 0,
+    retryCount = 0
   ): Promise<DownloadResult> {
     if (this.cancelled) {
       return { success: false, imageId, error: "Download cancelled" };
     }
 
+    const controller = new AbortController();
+    this.activeRequests.add(controller);
+
     try {
+      const timeoutId = setTimeout(() => {
+        controller.abort();
+      }, 12000);
+
+      const cacheBuster = `sw-bypass-${Date.now()}-${Math.random()
+        .toString(36)
+        .substr(2, 9)}`;
       const downloadResponse = await fetch(
-        `https://meo.comick.pictures/${b2key}`,
+        `https://meo.comick.pictures/${b2key}?${cacheBuster}`,
         {
+          method: "GET",
           headers: {
             "User-Agent": "ComickOfflineReader/1.0",
+            "Cache-Control": "no-cache, no-store, must-revalidate",
+            Pragma: "no-cache",
+            Expires: "0",
+            "X-Bypass-SW": "true",
           },
-        },
+          cache: "no-store",
+          signal: controller.signal,
+        }
       );
+
+      clearTimeout(timeoutId);
 
       if (!downloadResponse.ok) {
         throw new Error(`HTTP ${downloadResponse.status}`);
       }
 
       const blob = await downloadResponse.blob();
+
+      if (blob.size === 0) {
+        throw new Error("Empty image received");
+      }
+
       await saveImage(imageId, blob);
 
+      this.activeRequests.delete(controller);
       return { success: true, imageId };
     } catch (error) {
+      this.activeRequests.delete(controller);
+
       if (retryCount < this.downloadConfig.retryAttempts && !this.cancelled) {
+        this.connectionResetCounter++;
+        if (this.connectionResetCounter >= 10) {
+          console.warn(
+            "Multiple download failures detected, resetting network connections"
+          );
+          await this.resetNetworkConnections();
+        }
+
         await this.sleep(
-          this.downloadConfig.retryDelay * Math.pow(2, retryCount),
+          this.downloadConfig.retryDelay * Math.pow(2, retryCount)
         );
         return this.downloadImageWithRetry(b2key, imageId, retryCount + 1);
       }
@@ -307,16 +382,24 @@ export class DownloadService {
   private async downloadImagesConcurrently(
     images: ChapterImages[],
     chapterHid: string,
-    chapterNumber: string,
+    chapterNumber: string
   ): Promise<string[]> {
     if (this.cancelled) {
       throw new Error("Download cancelled");
+    }
+
+    if (!this.networkHealthy) {
+      const isHealthy = await this.checkNetworkHealth();
+      if (!isHealthy) {
+        await this.resetNetworkConnections();
+      }
     }
 
     const imageIds: string[] = [];
     const totalImages = images.length;
     let completedImages = 0;
     let failedImages = 0;
+    let consecutiveFailures = 0;
 
     const processBatch = async (batch: ChapterImages[]): Promise<void> => {
       const promises = batch.map(async (image) => {
@@ -329,9 +412,17 @@ export class DownloadService {
 
         if (result.success) {
           imageIds.push(result.imageId);
+          consecutiveFailures = 0;
         } else {
           failedImages++;
+          consecutiveFailures++;
           console.error(`Failed to download image ${imageId}:`, result.error);
+
+          if (consecutiveFailures >= 5) {
+            console.warn("Too many consecutive failures, resetting network");
+            await this.resetNetworkConnections();
+            consecutiveFailures = 0;
+          }
         }
 
         completedImages++;
@@ -341,7 +432,7 @@ export class DownloadService {
           `Chapter ${chapterNumber} - ${completedImages}/${totalImages} pages${
             failedImages > 0 ? ` (${failedImages} failed)` : ""
           }`,
-          "images",
+          "images"
         );
       });
 
@@ -360,7 +451,7 @@ export class DownloadService {
         }
         await Promise.allSettled(chunk);
         if (chunk.length === this.downloadConfig.maxConcurrent) {
-          await this.sleep(50);
+          await this.sleep(25);
         }
       }
     };
@@ -373,24 +464,30 @@ export class DownloadService {
       const batch = images.slice(i, i + this.downloadConfig.batchSize);
       await processBatch(batch);
 
-      if (i + this.downloadConfig.batchSize < images.length) {
-        await this.sleep(100);
+      if (
+        failedImages > 0 &&
+        i + this.downloadConfig.batchSize < images.length
+      ) {
+        await this.resetNetworkConnections();
+        await this.sleep(500);
+      } else if (i + this.downloadConfig.batchSize < images.length) {
+        await this.sleep(50);
       }
     }
 
     if (failedImages > 0) {
       const retryCount = Math.min(failedImages, 5);
       console.warn(
-        `Chapter ${chapterNumber}: ${failedImages} images failed to download. Retrying ${retryCount} images...`,
+        `Chapter ${chapterNumber}: ${failedImages} images failed to download. Retrying ${retryCount} images...`
       );
     }
 
     return imageIds.sort((a, b) => {
       const aIndex = images.findIndex((img) =>
-        a.includes(`${chapterHid}-${img.b2key}`),
+        a.includes(`${chapterHid}-${img.b2key}`)
       );
       const bIndex = images.findIndex((img) =>
-        b.includes(`${chapterHid}-${img.b2key}`),
+        b.includes(`${chapterHid}-${img.b2key}`)
       );
       return aIndex - bIndex;
     });
@@ -402,7 +499,6 @@ export class DownloadService {
     try {
       const { seriesId, remainingChapters } = resumeInfo;
 
-      // Get existing series
       const localSeries = await getSeries(seriesId);
       if (!localSeries) {
         throw new Error("Series not found for resume");
@@ -418,7 +514,6 @@ export class DownloadService {
         }
       }
 
-      // Download remaining chapters
       const completedChapters: number[] = [];
       const failedChapters: Chapter[] = [];
 
@@ -439,9 +534,9 @@ export class DownloadService {
           i + 1,
           availableChapters.length,
           `Downloading chapter ${chapter.chap} by ${getTranslatorName(
-            chapter,
+            chapter
           )}`,
-          "chapters",
+          "chapters"
         );
 
         try {
@@ -453,10 +548,9 @@ export class DownloadService {
         }
       }
 
-      // Update series with new chapters
       if (completedChapters.length > 0) {
         const updatedDownloadedChapters = Array.from(
-          new Set([...localSeries.downloadedChapters, ...completedChapters]),
+          new Set([...localSeries.downloadedChapters, ...completedChapters])
         ).sort((a, b) => a - b);
 
         localSeries.downloadedChapters = updatedDownloadedChapters;
@@ -465,9 +559,8 @@ export class DownloadService {
       }
 
       if (failedChapters.length > 0 && completedChapters.length > 0) {
-        // Partial success
         const error = new Error(
-          `Downloaded ${completedChapters.length} chapters, but ${failedChapters.length} failed`,
+          `Downloaded ${completedChapters.length} chapters, but ${failedChapters.length} failed`
         ) as DownloadError;
         error.type = "partial";
         error.resumeable = true;
@@ -476,9 +569,8 @@ export class DownloadService {
         error.seriesId = seriesId;
         throw error;
       } else if (failedChapters.length > 0) {
-        // Complete failure
         const error = new Error(
-          `Failed to download ${failedChapters.length} chapters`,
+          `Failed to download ${failedChapters.length} chapters`
         ) as DownloadError;
         error.type = "network";
         error.resumeable = true;
@@ -491,7 +583,7 @@ export class DownloadService {
         availableChapters.length,
         availableChapters.length,
         "Download complete!",
-        "chapters",
+        "chapters"
       );
     } catch (error) {
       console.error("Error resuming download:", error);
@@ -501,7 +593,7 @@ export class DownloadService {
 
   async downloadSeries(
     slug: string,
-    translatorPreferences: TranslatorPreferences,
+    translatorPreferences: TranslatorPreferences
   ): Promise<void> {
     this.cancelled = false;
 
@@ -511,7 +603,7 @@ export class DownloadService {
       const comicResponse = await fetch(`/api/comic/${slug}`);
       if (!comicResponse.ok) {
         throw new Error(
-          `Failed to fetch comic information: ${comicResponse.status}`,
+          `Failed to fetch comic information: ${comicResponse.status}`
         );
       }
       const comicInfo: ComicInfo = await comicResponse.json();
@@ -519,7 +611,7 @@ export class DownloadService {
       this.updateProgress(1, 3, "Fetching chapters list...", "setup");
 
       const chaptersResponse = await fetch(
-        `/api/chapters/${comicInfo.comic.hid}?limit=1000`,
+        `/api/chapters/${comicInfo.comic.hid}?limit=1000`
       );
       if (!chaptersResponse.ok) {
         throw new Error(`Failed to fetch chapters: ${chaptersResponse.status}`);
@@ -534,7 +626,7 @@ export class DownloadService {
       const translators = await this.getTranslatorInfo(slug);
       const chaptersToDownload = this.selectChaptersToDownload(
         englishChapters,
-        translatorPreferences,
+        translatorPreferences
       );
 
       const { futureChapters, availableChapters } =
@@ -585,9 +677,9 @@ export class DownloadService {
           i + 1,
           availableChapters.length,
           `Downloading chapter ${chapter.chap} by ${getTranslatorName(
-            chapter,
+            chapter
           )}`,
-          "chapters",
+          "chapters"
         );
 
         try {
@@ -599,18 +691,16 @@ export class DownloadService {
         }
       }
 
-      // Update series with completed chapters
       if (completedChapters.length > 0) {
         localSeries.downloadedChapters = completedChapters.sort(
-          (a, b) => a - b,
+          (a, b) => a - b
         );
         await saveSeries(localSeries);
       }
 
       if (failedChapters.length > 0 && completedChapters.length > 0) {
-        // Partial success
         const error = new Error(
-          `Downloaded ${completedChapters.length} chapters, but ${failedChapters.length} failed`,
+          `Downloaded ${completedChapters.length} chapters, but ${failedChapters.length} failed`
         ) as DownloadError;
         error.type = "partial";
         error.resumeable = true;
@@ -619,9 +709,8 @@ export class DownloadService {
         error.seriesId = comicInfo.comic.hid;
         throw error;
       } else if (failedChapters.length > 0) {
-        // Complete failure
         const error = new Error(
-          `Failed to download ${failedChapters.length} chapters`,
+          `Failed to download ${failedChapters.length} chapters`
         ) as DownloadError;
         error.type = "network";
         error.resumeable = true;
@@ -634,7 +723,7 @@ export class DownloadService {
         availableChapters.length,
         availableChapters.length,
         "Download complete!",
-        "chapters",
+        "chapters"
       );
     } catch (error) {
       console.error("Error downloading series:", error);
@@ -643,7 +732,7 @@ export class DownloadService {
   }
 
   private async confirmFutureChapters(
-    futureChapters: Chapter[],
+    futureChapters: Chapter[]
   ): Promise<boolean> {
     const futureChaptersList = futureChapters
       .map((ch) => `Chapter ${ch.chap}`)
@@ -664,7 +753,7 @@ export class DownloadService {
 
   private selectChaptersToDownload(
     chapters: Chapter[],
-    preferences: TranslatorPreferences,
+    preferences: TranslatorPreferences
   ): Chapter[] {
     const chapterMap = new Map<number, Chapter[]>();
 
@@ -685,13 +774,13 @@ export class DownloadService {
       const chaptersForNum = chapterMap.get(chapterNum)!;
 
       let selectedChapter = chaptersForNum.find(
-        (ch) => getTranslatorName(ch) === preferences.primary,
+        (ch) => getTranslatorName(ch) === preferences.primary
       );
 
       if (!selectedChapter && preferences.allowBackupOverride) {
         for (const backup of preferences.backups) {
           selectedChapter = chaptersForNum.find(
-            (ch) => getTranslatorName(ch) === backup,
+            (ch) => getTranslatorName(ch) === backup
           );
           if (selectedChapter) break;
         }
@@ -709,7 +798,7 @@ export class DownloadService {
 
   async updateSeries(
     seriesId: string,
-    options: UpdateOptions = {},
+    options: UpdateOptions = {}
   ): Promise<UpdateResult> {
     try {
       const localSeries = await getSeries(seriesId);
@@ -720,7 +809,7 @@ export class DownloadService {
       this.updateProgress(0, 2, "Checking for new chapters...", "setup");
 
       const chaptersResponse = await fetch(
-        `/api/chapters/${seriesId}?limit=1000`,
+        `/api/chapters/${seriesId}?limit=1000`
       );
       if (!chaptersResponse.ok) {
         throw new Error(`Failed to fetch chapters: ${chaptersResponse.status}`);
@@ -734,11 +823,11 @@ export class DownloadService {
 
       const existingChapters = await getChaptersBySeriesId(seriesId);
       const existingChapterNumbers = new Set(
-        existingChapters.map((ch) => parseFloat(ch.chapterNumber)),
+        existingChapters.map((ch) => parseFloat(ch.chapterNumber))
       );
 
       const newChapterCandidates = englishChapters.filter(
-        (ch) => !existingChapterNumbers.has(parseFloat(ch.chap)),
+        (ch) => !existingChapterNumbers.has(parseFloat(ch.chap))
       );
 
       if (newChapterCandidates.length === 0) {
@@ -748,7 +837,7 @@ export class DownloadService {
 
       const newChapters = this.selectChaptersToDownload(
         newChapterCandidates,
-        localSeries.translatorPreferences,
+        localSeries.translatorPreferences
       );
 
       const { futureChapters, availableChapters } =
@@ -765,8 +854,8 @@ export class DownloadService {
         (ch) =>
           getTranslatorName(ch) !== localSeries.translatorPreferences.primary &&
           !localSeries.translatorPreferences.backups.includes(
-            getTranslatorName(ch),
-          ),
+            getTranslatorName(ch)
+          )
       );
 
       if (conflicts.length > 0 && !options.skipTranslatorWarning) {
@@ -782,9 +871,9 @@ export class DownloadService {
           i + 1,
           availableChapters.length,
           `Downloading chapter ${chapter.chap} by ${getTranslatorName(
-            chapter,
+            chapter
           )}`,
-          "chapters",
+          "chapters"
         );
 
         await this.downloadChapter(seriesId, chapter);
@@ -795,7 +884,7 @@ export class DownloadService {
         .filter((num) => !isNaN(num));
 
       const updatedDownloadedChapters = Array.from(
-        new Set([...localSeries.downloadedChapters, ...newChapterNumbers]),
+        new Set([...localSeries.downloadedChapters, ...newChapterNumbers])
       ).sort((a, b) => a - b);
 
       localSeries.downloadedChapters = updatedDownloadedChapters;
@@ -806,7 +895,7 @@ export class DownloadService {
         availableChapters.length,
         availableChapters.length,
         `Downloaded ${availableChapters.length} new chapters`,
-        "chapters",
+        "chapters"
       );
 
       return { newChapters: availableChapters.length, conflicts: [] };
@@ -818,13 +907,13 @@ export class DownloadService {
 
   private async downloadChapter(
     seriesId: string,
-    chapter: Chapter,
+    chapter: Chapter
   ): Promise<void> {
     try {
       const imagesResponse = await fetch(`/api/chapter/${chapter.hid}/images`);
       if (!imagesResponse.ok) {
         throw new Error(
-          `Failed to fetch images for chapter ${chapter.chap}: ${imagesResponse.status}`,
+          `Failed to fetch images for chapter ${chapter.chap}: ${imagesResponse.status}`
         );
       }
 
@@ -833,7 +922,7 @@ export class DownloadService {
       const imageIds = await this.downloadImagesConcurrently(
         images,
         chapter.hid,
-        chapter.chap,
+        chapter.chap
       );
 
       const localChapter: LocalChapter = {
@@ -861,8 +950,12 @@ export class DownloadService {
     current: number,
     total: number,
     status: string,
-    type: "setup" | "chapters" | "images",
+    type: "setup" | "chapters" | "images"
   ): void {
     this.onProgress?.({ current, total, status, type });
+  }
+
+  destroy(): void {
+    this.cancel();
   }
 }

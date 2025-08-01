@@ -14,7 +14,7 @@ self.addEventListener("install", (event) => {
     caches.open(CACHE_NAME).then((cache) => {
       console.log("Opened cache");
       return cache.addAll(urlsToCache);
-    }),
+    })
   );
   self.skipWaiting();
 });
@@ -28,9 +28,9 @@ self.addEventListener("activate", (event) => {
             console.log("Deleting old cache:", cacheName);
             return caches.delete(cacheName);
           }
-        }),
+        })
       );
-    }),
+    })
   );
   self.clients.claim();
 });
@@ -43,11 +43,23 @@ self.addEventListener("fetch", (event) => {
     "Fetch request:",
     request.mode,
     request.destination,
-    url.pathname,
+    url.pathname
   );
 
   if (url.origin !== location.origin) {
     if (url.hostname === "meo.comick.pictures") {
+      if (
+        url.searchParams.has("sw-bypass") ||
+        request.headers.get("X-Bypass-SW") === "true" ||
+        url.search.includes("sw-bypass-")
+      ) {
+        console.log(
+          "Bypassing service worker for image download:",
+          url.pathname
+        );
+        return;
+      }
+
       event.respondWith(
         caches.match(request).then((response) => {
           if (response) {
@@ -66,7 +78,7 @@ self.addEventListener("fetch", (event) => {
             .catch(() => {
               return caches.match(request);
             });
-        }),
+        })
       );
     }
     return;
@@ -86,7 +98,7 @@ self.addEventListener("fetch", (event) => {
         })
         .catch(() => {
           return caches.match(request);
-        }),
+        })
     );
     return;
   }
@@ -113,7 +125,7 @@ self.addEventListener("fetch", (event) => {
           .catch(() => {
             return caches.match(request);
           });
-      }),
+      })
     );
     return;
   }
@@ -151,7 +163,7 @@ self.addEventListener("fetch", (event) => {
           .catch(() => {
             console.log(
               "Fetch failed, serving offline page for:",
-              url.pathname,
+              url.pathname
             );
             return caches.match("/offline.html").then((offlineResponse) => {
               if (offlineResponse) {
@@ -195,11 +207,11 @@ self.addEventListener("fetch", (event) => {
                     "Content-Type": "text/html",
                     "Cache-Control": "no-store",
                   },
-                },
+                }
               );
             });
           });
-      }),
+      })
     );
     return;
   }
@@ -207,7 +219,7 @@ self.addEventListener("fetch", (event) => {
   event.respondWith(
     caches.match(request).then((response) => {
       return response || fetch(request);
-    }),
+    })
   );
 });
 

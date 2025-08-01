@@ -47,7 +47,7 @@ export function ChapterReader({
   const [zoom, setZoom] = useState(1);
   const [panOffset, setPanOffset] = useState({ x: 0, y: 0 });
   const [controlsTimeout, setControlsTimeout] = useState<NodeJS.Timeout | null>(
-    null,
+    null
   );
   const [forceShowControls, setForceShowControls] = useState(false);
 
@@ -55,14 +55,19 @@ export function ChapterReader({
     createTouchGestureHandler({
       swipeThreshold: 30,
       velocityThreshold: 0.2,
-    }),
+    })
   );
   const scrollContainerRef = useRef<HTMLDivElement>(null);
   const imageContainerRef = useRef<HTMLDivElement>(null);
+  const imageUrlsRef = useRef<string[]>([]);
 
   useEffect(() => {
     loadImages();
     markAsRead();
+
+    return () => {
+      cleanupBlobUrls();
+    };
   }, [chapter]);
 
   useEffect(() => {
@@ -76,12 +81,23 @@ export function ChapterReader({
     };
   }, [showControls, readingMode, forceShowControls, controlsTimeout]);
 
+  const cleanupBlobUrls = useCallback(() => {
+    imageUrlsRef.current.forEach((url) => {
+      try {
+        URL.revokeObjectURL(url);
+      } catch (error) {
+        console.warn("Failed to revoke blob URL:", error);
+      }
+    });
+    imageUrlsRef.current = [];
+  }, []);
+
   const markAsRead = async () => {
     try {
       await updateLastReadChapter(
         chapter.seriesId,
         chapter.chapterNumber,
-        chapter.chapterHid,
+        chapter.chapterHid
       );
     } catch (error) {
       console.error("Failed to mark chapter as read:", error);
@@ -91,14 +107,32 @@ export function ChapterReader({
   const loadImages = async () => {
     try {
       setLoading(true);
+
+      cleanupBlobUrls();
+
       const imageUrls: string[] = [];
+      const failedImages: string[] = [];
 
       for (const imageId of chapter.images) {
-        const blob = await getImage(imageId);
-        if (blob) {
-          const url = URL.createObjectURL(blob);
-          imageUrls.push(url);
+        try {
+          const blob = await getImage(imageId);
+          if (blob && blob.size > 0) {
+            const url = URL.createObjectURL(blob);
+            imageUrls.push(url);
+            imageUrlsRef.current.push(url);
+          } else {
+            failedImages.push(imageId);
+          }
+        } catch (error) {
+          console.error(`Error loading image ${imageId}:`, error);
+          failedImages.push(imageId);
         }
+      }
+
+      if (failedImages.length > 0) {
+        console.warn(
+          `Failed to load ${failedImages.length} images for chapter ${chapter.chapterNumber}`
+        );
       }
 
       setImages(imageUrls);
@@ -129,7 +163,7 @@ export function ChapterReader({
         onClose();
       }
     },
-    [readingMode, currentPage, images.length, hasPrevChapter, hasNextChapter],
+    [readingMode, currentPage, images.length, hasPrevChapter, hasNextChapter]
   );
 
   useEffect(() => {
@@ -333,6 +367,11 @@ export function ChapterReader({
                 alt={`Page ${index + 1}`}
                 className="w-full h-auto block max-w-full"
                 style={{ maxWidth: "100vw" }}
+                onError={(e) => {
+                  console.error(`Failed to load image ${index + 1}`);
+                  e.currentTarget.style.display = "none";
+                }}
+                loading={index < 3 ? "eager" : "lazy"}
               />
             ))}
           </div>
@@ -355,6 +394,9 @@ export function ChapterReader({
                   transform: `scale(${zoom}) translate(${panOffset.x}px, ${panOffset.y}px)`,
                   maxWidth: "calc(100vw - 2rem)",
                   maxHeight: "calc(100vh - 2rem)",
+                }}
+                onError={(e) => {
+                  console.error(`Failed to load current page image`);
                 }}
               />
             )}
