@@ -1,7 +1,8 @@
+/* eslint-disable @typescript-eslint/no-explicit-any */
 /* eslint-disable react-hooks/exhaustive-deps */
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import {
   Download,
   Plus,
@@ -18,6 +19,7 @@ import { SeriesListItem } from "@/components/SeriesListItem";
 import { DownloadProgress } from "@/components/DownloadProgress";
 import { TranslatorSelector } from "@/components/TranslatorSelector";
 import { TranslatorConflictDialog } from "@/components/TranslatorConflictDialog";
+import { ResumeDialog } from "@/components/ResumeDialog";
 import {
   LocalSeries,
   TranslatorPreferences,
@@ -31,6 +33,22 @@ import { useRouter } from "next/navigation";
 type ViewMode = "grid" | "list";
 type SortMode = "title" | "updated" | "progress" | "rating";
 
+interface DownloadError {
+  message: string;
+  type: "network" | "partial" | "cancelled" | "unknown";
+  resumeable: boolean;
+  completedChapters?: number[];
+  failedChapters?: any[];
+  seriesId?: string;
+}
+
+interface ResumeDialogState {
+  existingTitle: string;
+  existingChapters: number;
+  missingChapters: number;
+  resumeInfo: any;
+}
+
 export default function Home() {
   const [series, setSeries] = useState<LocalSeries[]>([]);
   const [filteredSeries, setFilteredSeries] = useState<LocalSeries[]>([]);
@@ -40,6 +58,7 @@ export default function Home() {
   const [showAddForm, setShowAddForm] = useState(false);
   const [showTranslatorSelector, setShowTranslatorSelector] = useState(false);
   const [showConflictDialog, setShowConflictDialog] = useState(false);
+  const [showResumeDialog, setShowResumeDialog] = useState(false);
   const [showFilters, setShowFilters] = useState(false);
   const [comickUrl, setComickUrl] = useState("");
   const [downloading, setDownloading] = useState(false);
@@ -49,9 +68,18 @@ export default function Home() {
       total: 100,
       status: "",
     });
+  const [downloadError, setDownloadError] = useState<DownloadError | null>(
+    null,
+  );
   const [currentSlug, setCurrentSlug] = useState("");
   const [updateConflicts, setUpdateConflicts] =
     useState<ConflictDialogState | null>(null);
+  const [resumeDialogState, setResumeDialogState] =
+    useState<ResumeDialogState | null>(null);
+  const [currentTranslatorPreferences, setCurrentTranslatorPreferences] =
+    useState<TranslatorPreferences | null>(null);
+
+  const downloadServiceRef = useRef<DownloadService | null>(null);
   const router = useRouter();
 
   useEffect(() => {
@@ -116,12 +144,99 @@ export default function Home() {
     return match ? match[1] : url;
   };
 
-  const handleAddSeries = () => {
+  const handleAddSeries = async () => {
     if (!comickUrl.trim()) return;
 
     const slug = extractSlugFromUrl(comickUrl.trim());
     setCurrentSlug(slug);
-    setShowAddForm(false);
+
+    try {
+      // Check if series already exists
+      const downloadService = new DownloadService();
+      const resumeInfo = await downloadService.getResumeInfo(slug);
+
+      if (resumeInfo && resumeInfo.remainingChapters.length > 0) {
+        // Series exists with missing chapters
+        const existingSeries = await downloadService.checkExistingSeries(slug);
+        if (existingSeries) {
+          setResumeDialogState({
+            existingTitle: existingSeries.title,
+            existingChapters: resumeInfo.completedChapters.length,
+            missingChapters: resumeInfo.remainingChapters.length,
+            resumeInfo,
+          });
+          setShowAddForm(false);
+          setShowResumeDialog(true);
+          return;
+        }
+      } else if (resumeInfo && resumeInfo.remainingChapters.length === 0) {
+        // Series exists and is up to date
+        const existingSeries = await downloadService.checkExistingSeries(slug);
+        if (existingSeries) {
+          setResumeDialogState({
+            existingTitle: existingSeries.title,
+            existingChapters: resumeInfo.completedChapters.length,
+            missingChapters: 0,
+            resumeInfo,
+          });
+          setShowAddForm(false);
+          setShowResumeDialog(true);
+          return;
+        }
+      }
+
+      // New series
+      setShowAddForm(false);
+      setShowTranslatorSelector(true);
+    } catch (error) {
+      console.error("Error checking existing series:", error);
+      // If checking fails, proceed with normal flow
+      setShowAddForm(false);
+      setShowTranslatorSelector(true);
+    }
+  };
+
+  const handleResumeDownload = async () => {
+    if (!resumeDialogState?.resumeInfo) return;
+
+    try {
+      setDownloading(true);
+      setDownloadError(null);
+      setShowResumeDialog(false);
+
+      const downloadService = new DownloadService(setDownloadProgress);
+      downloadServiceRef.current = downloadService;
+
+      await downloadService.resumeDownload(resumeDialogState.resumeInfo);
+      await loadSeries();
+      setComickUrl("");
+    } catch (error: any) {
+      console.error("Resume download failed:", error);
+
+      if (error.resumeable) {
+        setDownloadError({
+          message: error.message,
+          type: error.type || "unknown",
+          resumeable: error.resumeable,
+          completedChapters: error.completedChapters,
+          failedChapters: error.failedChapters,
+          seriesId: error.seriesId,
+        });
+      } else {
+        setDownloadError({
+          message: "Failed to resume download. Please try again.",
+          type: "unknown",
+          resumeable: false,
+        });
+      }
+    } finally {
+      setDownloading(false);
+      downloadServiceRef.current = null;
+    }
+  };
+
+  const handleStartNewConfiguration = () => {
+    setShowResumeDialog(false);
     setShowTranslatorSelector(true);
   };
 
@@ -130,18 +245,109 @@ export default function Home() {
   ) => {
     try {
       setDownloading(true);
+      setDownloadError(null);
       setShowTranslatorSelector(false);
+      setCurrentTranslatorPreferences(preferences);
 
       const downloadService = new DownloadService(setDownloadProgress);
+      downloadServiceRef.current = downloadService;
+
       await downloadService.downloadSeries(currentSlug, preferences);
       await loadSeries();
       setComickUrl("");
-    } catch (error) {
+    } catch (error: any) {
       console.error("Download failed:", error);
-      alert("Download failed. Please check the URL and try again.");
+
+      if (error.resumeable) {
+        setDownloadError({
+          message: error.message,
+          type: error.type || "unknown",
+          resumeable: error.resumeable,
+          completedChapters: error.completedChapters,
+          failedChapters: error.failedChapters,
+          seriesId: error.seriesId,
+        });
+      } else {
+        setDownloadError({
+          message: "Download failed. Please check the URL and try again.",
+          type: "unknown",
+          resumeable: false,
+        });
+      }
     } finally {
       setDownloading(false);
+      downloadServiceRef.current = null;
     }
+  };
+
+  const handleRetryDownload = async () => {
+    if (!downloadError) return;
+
+    if (downloadError.seriesId && downloadError.failedChapters) {
+      // Resume from failed chapters
+      try {
+        setDownloadError(null);
+        setDownloading(true);
+
+        const downloadService = new DownloadService(setDownloadProgress);
+        downloadServiceRef.current = downloadService;
+
+        // Create resume info from error data
+        const resumeInfo = {
+          seriesId: downloadError.seriesId,
+          completedChapters: downloadError.completedChapters || [],
+          remainingChapters: downloadError.failedChapters,
+          translatorPreferences: currentTranslatorPreferences || {
+            primary: "",
+            backups: [],
+            allowBackupOverride: true,
+          },
+        };
+
+        await downloadService.resumeDownload(resumeInfo);
+        await loadSeries();
+      } catch (error: any) {
+        console.error("Retry failed:", error);
+
+        if (error.resumeable) {
+          setDownloadError({
+            message: error.message,
+            type: error.type || "unknown",
+            resumeable: error.resumeable,
+            completedChapters: error.completedChapters,
+            failedChapters: error.failedChapters,
+            seriesId: error.seriesId,
+          });
+        } else {
+          setDownloadError({
+            message: "Retry failed. Please try again later.",
+            type: "unknown",
+            resumeable: false,
+          });
+        }
+      } finally {
+        setDownloading(false);
+        downloadServiceRef.current = null;
+      }
+    } else {
+      // Restart from translator selection
+      setDownloadError(null);
+      setShowTranslatorSelector(true);
+    }
+  };
+
+  const handleCancelDownload = () => {
+    if (downloadServiceRef.current) {
+      downloadServiceRef.current.cancel();
+    }
+    setDownloading(false);
+    setDownloadError(null);
+    downloadServiceRef.current = null;
+  };
+
+  const handleCloseError = () => {
+    setDownloadError(null);
+    setCurrentTranslatorPreferences(null);
   };
 
   const handleUpdate = async (seriesId: string) => {
@@ -483,6 +689,20 @@ export default function Home() {
         </div>
       )}
 
+      {showResumeDialog && resumeDialogState && (
+        <ResumeDialog
+          existingTitle={resumeDialogState.existingTitle}
+          existingChapters={resumeDialogState.existingChapters}
+          missingChapters={resumeDialogState.missingChapters}
+          onResume={handleResumeDownload}
+          onStartNew={handleStartNewConfiguration}
+          onCancel={() => {
+            setShowResumeDialog(false);
+            setResumeDialogState(null);
+          }}
+        />
+      )}
+
       {showTranslatorSelector && (
         <TranslatorSelector
           slug={currentSlug}
@@ -502,7 +722,14 @@ export default function Home() {
         />
       )}
 
-      {downloading && <DownloadProgress progress={downloadProgress} />}
+      {(downloading || downloadError) && (
+        <DownloadProgress
+          progress={downloadProgress}
+          error={downloadError}
+          onCancel={downloadError ? handleCloseError : handleCancelDownload}
+          onRetry={downloadError ? handleRetryDownload : undefined}
+        />
+      )}
     </div>
   );
 }

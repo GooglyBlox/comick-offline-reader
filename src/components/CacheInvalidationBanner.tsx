@@ -19,7 +19,7 @@ export function CacheInvalidationBanner() {
       try {
         const currentCacheVersion = "v1.8";
         const acknowledgedVersion = localStorage.getItem(
-          "cache-invalidation-acknowledged"
+          "cache-invalidation-acknowledged",
         );
 
         if (

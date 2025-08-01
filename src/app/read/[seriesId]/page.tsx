@@ -36,7 +36,7 @@ export default function ReadPage({ params }: ReadPageProps) {
   const [series, setSeries] = useState<LocalSeries | null>(null);
   const [chapters, setChapters] = useState<LocalChapter[]>([]);
   const [currentChapter, setCurrentChapter] = useState<LocalChapter | null>(
-    null
+    null,
   );
   const [loading, setLoading] = useState(true);
   const [updatingDescription, setUpdatingDescription] = useState(false);
@@ -58,7 +58,7 @@ export default function ReadPage({ params }: ReadPageProps) {
 
       const chaptersData = await getChaptersBySeriesId(params.seriesId);
       const sortedChapters = chaptersData.sort(
-        (a, b) => parseFloat(b.chapterNumber) - parseFloat(a.chapterNumber)
+        (a, b) => parseFloat(b.chapterNumber) - parseFloat(a.chapterNumber),
       );
 
       setSeries(seriesData);
@@ -125,7 +125,7 @@ export default function ReadPage({ params }: ReadPageProps) {
   const getCurrentChapterIndex = () => {
     if (!currentChapter) return -1;
     return chapters.findIndex(
-      (ch) => ch.chapterHid === currentChapter.chapterHid
+      (ch) => ch.chapterHid === currentChapter.chapterHid,
     );
   };
 
@@ -414,7 +414,7 @@ export default function ReadPage({ params }: ReadPageProps) {
                       <div className="flex items-center gap-3">
                         <span className="text-slate-400 text-sm">
                           {formatRelativeTime(
-                            chapter.updatedAt || chapter.downloadedAt
+                            chapter.updatedAt || chapter.downloadedAt,
                           )}
                         </span>
                         <ChevronRight

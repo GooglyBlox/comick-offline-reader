@@ -34,6 +34,21 @@ interface UpdateOptions {
   skipTranslatorWarning?: boolean;
 }
 
+interface DownloadError extends Error {
+  type: "network" | "partial" | "cancelled" | "unknown";
+  resumeable: boolean;
+  completedChapters?: number[];
+  failedChapters?: Chapter[];
+  seriesId?: string;
+}
+
+interface ResumeInfo {
+  seriesId: string;
+  completedChapters: number[];
+  remainingChapters: Chapter[];
+  translatorPreferences: TranslatorPreferences;
+}
+
 function getTranslatorName(chapter: Chapter): string {
   if (
     chapter.md_chapters_groups &&
@@ -62,9 +77,14 @@ export class DownloadService {
     retryDelay: 1000,
     batchSize: 50,
   };
+  private cancelled = false;
 
   constructor(onProgress?: (progress: DownloadProgressState) => void) {
     this.onProgress = onProgress;
+  }
+
+  cancel(): void {
+    this.cancelled = true;
   }
 
   async getTranslatorInfo(slug: string): Promise<TranslatorInfo[]> {
@@ -121,6 +141,79 @@ export class DownloadService {
     }
   }
 
+  async checkExistingSeries(slug: string): Promise<LocalSeries | null> {
+    try {
+      // First get comic info to get the hid
+      const comicResponse = await fetch(`/api/comic/${slug}`);
+      if (!comicResponse.ok) {
+        return null;
+      }
+      const comicInfo: ComicInfo = await comicResponse.json();
+
+      // Check if series exists by hid
+      const existingSeries = await getSeries(comicInfo.comic.hid);
+      return existingSeries || null;
+    } catch (error) {
+      console.error("Error checking existing series:", error);
+      return null;
+    }
+  }
+
+  async getResumeInfo(slug: string): Promise<ResumeInfo | null> {
+    try {
+      const existingSeries = await this.checkExistingSeries(slug);
+      if (!existingSeries) {
+        return null;
+      }
+
+      // Get available chapters
+      const chaptersResponse = await fetch(
+        `/api/chapters/${existingSeries.hid}?limit=1000`,
+      );
+      if (!chaptersResponse.ok) {
+        return null;
+      }
+      const chaptersData = await chaptersResponse.json();
+      const chapters: Chapter[] = chaptersData.chapters || [];
+
+      const englishChapters = chapters
+        .filter((chapter) => chapter.lang === "en")
+        .sort((a, b) => parseFloat(a.chap) - parseFloat(b.chap));
+
+      // Get existing chapters
+      const existingChapters = await getChaptersBySeriesId(existingSeries.id);
+      const existingChapterNumbers = new Set(
+        existingChapters.map((ch) => parseFloat(ch.chapterNumber)),
+      );
+
+      // Find chapters to download using existing preferences
+      const allAvailableChapters = this.selectChaptersToDownload(
+        englishChapters,
+        existingSeries.translatorPreferences,
+      );
+
+      const remainingChapters = allAvailableChapters.filter(
+        (ch) => !existingChapterNumbers.has(parseFloat(ch.chap)),
+      );
+
+      if (remainingChapters.length === 0) {
+        return null; // No new chapters to download
+      }
+
+      return {
+        seriesId: existingSeries.id,
+        completedChapters: Array.from(existingChapterNumbers).sort(
+          (a, b) => a - b,
+        ),
+        remainingChapters,
+        translatorPreferences: existingSeries.translatorPreferences,
+      };
+    } catch (error) {
+      console.error("Error getting resume info:", error);
+      return null;
+    }
+  }
+
   private checkFutureChapters(chapters: Chapter[]): {
     futureChapters: Chapter[];
     availableChapters: Chapter[];
@@ -169,6 +262,10 @@ export class DownloadService {
     imageId: string,
     retryCount = 0,
   ): Promise<DownloadResult> {
+    if (this.cancelled) {
+      return { success: false, imageId, error: "Download cancelled" };
+    }
+
     try {
       const downloadResponse = await fetch(
         `https://meo.comick.pictures/${b2key}`,
@@ -188,7 +285,7 @@ export class DownloadService {
 
       return { success: true, imageId };
     } catch (error) {
-      if (retryCount < this.downloadConfig.retryAttempts) {
+      if (retryCount < this.downloadConfig.retryAttempts && !this.cancelled) {
         await this.sleep(
           this.downloadConfig.retryDelay * Math.pow(2, retryCount),
         );
@@ -212,6 +309,10 @@ export class DownloadService {
     chapterHid: string,
     chapterNumber: string,
   ): Promise<string[]> {
+    if (this.cancelled) {
+      throw new Error("Download cancelled");
+    }
+
     const imageIds: string[] = [];
     const totalImages = images.length;
     let completedImages = 0;
@@ -219,6 +320,10 @@ export class DownloadService {
 
     const processBatch = async (batch: ChapterImages[]): Promise<void> => {
       const promises = batch.map(async (image) => {
+        if (this.cancelled) {
+          return;
+        }
+
         const imageId = `${chapterHid}-${image.b2key}`;
         const result = await this.downloadImageWithRetry(image.b2key, imageId);
 
@@ -250,6 +355,9 @@ export class DownloadService {
       }
 
       for (const chunk of chunks) {
+        if (this.cancelled) {
+          throw new Error("Download cancelled");
+        }
         await Promise.allSettled(chunk);
         if (chunk.length === this.downloadConfig.maxConcurrent) {
           await this.sleep(50);
@@ -258,6 +366,10 @@ export class DownloadService {
     };
 
     for (let i = 0; i < images.length; i += this.downloadConfig.batchSize) {
+      if (this.cancelled) {
+        throw new Error("Download cancelled");
+      }
+
       const batch = images.slice(i, i + this.downloadConfig.batchSize);
       await processBatch(batch);
 
@@ -284,10 +396,115 @@ export class DownloadService {
     });
   }
 
+  async resumeDownload(resumeInfo: ResumeInfo): Promise<void> {
+    this.cancelled = false;
+
+    try {
+      const { seriesId, remainingChapters } = resumeInfo;
+
+      // Get existing series
+      const localSeries = await getSeries(seriesId);
+      if (!localSeries) {
+        throw new Error("Series not found for resume");
+      }
+
+      const { futureChapters, availableChapters } =
+        this.checkFutureChapters(remainingChapters);
+
+      if (futureChapters.length > 0) {
+        const confirmed = await this.confirmFutureChapters(futureChapters);
+        if (!confirmed) {
+          throw new Error("Download cancelled by user");
+        }
+      }
+
+      // Download remaining chapters
+      const completedChapters: number[] = [];
+      const failedChapters: Chapter[] = [];
+
+      for (let i = 0; i < availableChapters.length; i++) {
+        if (this.cancelled) {
+          const error = new Error("Download cancelled") as DownloadError;
+          error.type = "cancelled";
+          error.resumeable = true;
+          error.completedChapters = completedChapters;
+          error.failedChapters = availableChapters.slice(i);
+          error.seriesId = seriesId;
+          throw error;
+        }
+
+        const chapter = availableChapters[i];
+
+        this.updateProgress(
+          i + 1,
+          availableChapters.length,
+          `Downloading chapter ${chapter.chap} by ${getTranslatorName(
+            chapter,
+          )}`,
+          "chapters",
+        );
+
+        try {
+          await this.downloadChapter(seriesId, chapter);
+          completedChapters.push(parseFloat(chapter.chap));
+        } catch (error) {
+          console.error(`Failed to download chapter ${chapter.chap}:`, error);
+          failedChapters.push(chapter);
+        }
+      }
+
+      // Update series with new chapters
+      if (completedChapters.length > 0) {
+        const updatedDownloadedChapters = Array.from(
+          new Set([...localSeries.downloadedChapters, ...completedChapters]),
+        ).sort((a, b) => a - b);
+
+        localSeries.downloadedChapters = updatedDownloadedChapters;
+        localSeries.lastUpdated = new Date();
+        await saveSeries(localSeries);
+      }
+
+      if (failedChapters.length > 0 && completedChapters.length > 0) {
+        // Partial success
+        const error = new Error(
+          `Downloaded ${completedChapters.length} chapters, but ${failedChapters.length} failed`,
+        ) as DownloadError;
+        error.type = "partial";
+        error.resumeable = true;
+        error.completedChapters = completedChapters;
+        error.failedChapters = failedChapters;
+        error.seriesId = seriesId;
+        throw error;
+      } else if (failedChapters.length > 0) {
+        // Complete failure
+        const error = new Error(
+          `Failed to download ${failedChapters.length} chapters`,
+        ) as DownloadError;
+        error.type = "network";
+        error.resumeable = true;
+        error.failedChapters = failedChapters;
+        error.seriesId = seriesId;
+        throw error;
+      }
+
+      this.updateProgress(
+        availableChapters.length,
+        availableChapters.length,
+        "Download complete!",
+        "chapters",
+      );
+    } catch (error) {
+      console.error("Error resuming download:", error);
+      throw error;
+    }
+  }
+
   async downloadSeries(
     slug: string,
     translatorPreferences: TranslatorPreferences,
   ): Promise<void> {
+    this.cancelled = false;
+
     try {
       this.updateProgress(0, 3, "Fetching comic information...", "setup");
 
@@ -332,10 +549,6 @@ export class DownloadService {
 
       this.updateProgress(2, 3, "Preparing download...", "setup");
 
-      const downloadedChapterNumbers = availableChapters
-        .map((ch) => parseFloat(ch.chap))
-        .filter((num) => !isNaN(num));
-
       const localSeries: LocalSeries = {
         id: comicInfo.comic.hid,
         title: comicInfo.comic.title,
@@ -352,7 +565,20 @@ export class DownloadService {
 
       await saveSeries(localSeries);
 
+      const completedChapters: number[] = [];
+      const failedChapters: Chapter[] = [];
+
       for (let i = 0; i < availableChapters.length; i++) {
+        if (this.cancelled) {
+          const error = new Error("Download cancelled") as DownloadError;
+          error.type = "cancelled";
+          error.resumeable = true;
+          error.completedChapters = completedChapters;
+          error.failedChapters = availableChapters.slice(i);
+          error.seriesId = comicInfo.comic.hid;
+          throw error;
+        }
+
         const chapter = availableChapters[i];
 
         this.updateProgress(
@@ -364,13 +590,45 @@ export class DownloadService {
           "chapters",
         );
 
-        await this.downloadChapter(comicInfo.comic.hid, chapter);
+        try {
+          await this.downloadChapter(comicInfo.comic.hid, chapter);
+          completedChapters.push(parseFloat(chapter.chap));
+        } catch (error) {
+          console.error(`Failed to download chapter ${chapter.chap}:`, error);
+          failedChapters.push(chapter);
+        }
       }
 
-      localSeries.downloadedChapters = downloadedChapterNumbers.sort(
-        (a, b) => a - b,
-      );
-      await saveSeries(localSeries);
+      // Update series with completed chapters
+      if (completedChapters.length > 0) {
+        localSeries.downloadedChapters = completedChapters.sort(
+          (a, b) => a - b,
+        );
+        await saveSeries(localSeries);
+      }
+
+      if (failedChapters.length > 0 && completedChapters.length > 0) {
+        // Partial success
+        const error = new Error(
+          `Downloaded ${completedChapters.length} chapters, but ${failedChapters.length} failed`,
+        ) as DownloadError;
+        error.type = "partial";
+        error.resumeable = true;
+        error.completedChapters = completedChapters;
+        error.failedChapters = failedChapters;
+        error.seriesId = comicInfo.comic.hid;
+        throw error;
+      } else if (failedChapters.length > 0) {
+        // Complete failure
+        const error = new Error(
+          `Failed to download ${failedChapters.length} chapters`,
+        ) as DownloadError;
+        error.type = "network";
+        error.resumeable = true;
+        error.failedChapters = failedChapters;
+        error.seriesId = comicInfo.comic.hid;
+        throw error;
+      }
 
       this.updateProgress(
         availableChapters.length,
