@@ -14,6 +14,8 @@ import {
   ChevronRight,
   Settings,
   Play,
+  RotateCcw,
+  Clock,
 } from "lucide-react";
 import { ChapterReader } from "@/components/ChapterReader";
 import { LocalSeries, LocalChapter } from "@/types/comick";
@@ -34,7 +36,7 @@ export default function ReadPage({ params }: ReadPageProps) {
   const [series, setSeries] = useState<LocalSeries | null>(null);
   const [chapters, setChapters] = useState<LocalChapter[]>([]);
   const [currentChapter, setCurrentChapter] = useState<LocalChapter | null>(
-    null,
+    null
   );
   const [loading, setLoading] = useState(true);
   const [updatingDescription, setUpdatingDescription] = useState(false);
@@ -56,7 +58,7 @@ export default function ReadPage({ params }: ReadPageProps) {
 
       const chaptersData = await getChaptersBySeriesId(params.seriesId);
       const sortedChapters = chaptersData.sort(
-        (a, b) => parseFloat(b.chapterNumber) - parseFloat(a.chapterNumber),
+        (a, b) => parseFloat(b.chapterNumber) - parseFloat(a.chapterNumber)
       );
 
       setSeries(seriesData);
@@ -115,10 +117,15 @@ export default function ReadPage({ params }: ReadPageProps) {
     await openChapter(firstChapter.chapterHid);
   };
 
+  const openLastReadChapter = async () => {
+    if (!series?.lastReadChapter) return;
+    await openChapter(series.lastReadChapter.chapterHid);
+  };
+
   const getCurrentChapterIndex = () => {
     if (!currentChapter) return -1;
     return chapters.findIndex(
-      (ch) => ch.chapterHid === currentChapter.chapterHid,
+      (ch) => ch.chapterHid === currentChapter.chapterHid
     );
   };
 
@@ -140,6 +147,7 @@ export default function ReadPage({ params }: ReadPageProps) {
 
   const closeReader = () => {
     setCurrentChapter(null);
+    loadSeriesData();
   };
 
   const formatRelativeTime = (date: Date | undefined) => {
@@ -291,6 +299,34 @@ export default function ReadPage({ params }: ReadPageProps) {
               </div>
             </div>
 
+            {series.lastReadChapter && (
+              <div className="bg-blue-600/10 border border-blue-600/20 rounded-xl p-4">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-3">
+                    <div className="p-2 bg-blue-600/20 rounded-lg">
+                      <Clock size={16} className="text-blue-400" />
+                    </div>
+                    <div>
+                      <div className="text-blue-300 font-medium text-sm">
+                        Continue Reading
+                      </div>
+                      <div className="text-blue-400 text-xs">
+                        Chapter {series.lastReadChapter.chapterNumber} •{" "}
+                        {formatRelativeTime(series.lastReadChapter.readAt)}
+                      </div>
+                    </div>
+                  </div>
+                  <button
+                    onClick={openLastReadChapter}
+                    className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg font-medium transition-all flex items-center gap-2"
+                  >
+                    <RotateCcw size={14} />
+                    Continue
+                  </button>
+                </div>
+              </div>
+            )}
+
             <div className="bg-slate-900/50 border border-slate-800 rounded-xl p-4">
               <div className="flex items-center justify-between mb-3">
                 <h3 className="text-lg font-bold text-white">Description</h3>
@@ -349,12 +385,26 @@ export default function ReadPage({ params }: ReadPageProps) {
                     <button
                       key={chapter.chapterHid}
                       onClick={() => openChapter(chapter.chapterHid)}
-                      className="w-full flex items-center justify-between p-4 bg-slate-800/50 hover:bg-slate-700/50 border border-slate-700 hover:border-slate-600 rounded-xl text-left transition-all group"
+                      className={`w-full flex items-center justify-between p-4 border rounded-xl text-left transition-all group ${
+                        series.lastReadChapter?.chapterHid ===
+                        chapter.chapterHid
+                          ? "bg-blue-600/10 border-blue-600/30"
+                          : "bg-slate-800/50 hover:bg-slate-700/50 border-slate-700 hover:border-slate-600"
+                      }`}
                     >
                       <div className="flex flex-col items-start">
-                        <span className="text-white font-medium">
-                          Chapter {chapter.chapterNumber}
-                        </span>
+                        <div className="flex items-center gap-2">
+                          <span className="text-white font-medium">
+                            Chapter {chapter.chapterNumber}
+                          </span>
+                          {series.lastReadChapter?.chapterHid ===
+                            chapter.chapterHid && (
+                            <div className="flex items-center gap-1 text-xs text-blue-400 bg-blue-600/20 px-2 py-1 rounded-lg">
+                              <Clock size={10} />
+                              <span>Last Read</span>
+                            </div>
+                          )}
+                        </div>
                         {chapter.translator && (
                           <span className="text-slate-400 text-sm">
                             by {chapter.translator}
@@ -364,7 +414,7 @@ export default function ReadPage({ params }: ReadPageProps) {
                       <div className="flex items-center gap-3">
                         <span className="text-slate-400 text-sm">
                           {formatRelativeTime(
-                            chapter.updatedAt || chapter.downloadedAt,
+                            chapter.updatedAt || chapter.downloadedAt
                           )}
                         </span>
                         <ChevronRight

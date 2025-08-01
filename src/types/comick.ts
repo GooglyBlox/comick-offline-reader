@@ -100,6 +100,11 @@ export interface LocalSeries {
   info: ComicInfo;
   translators: TranslatorInfo[];
   translatorPreferences: TranslatorPreferences;
+  lastReadChapter?: {
+    chapterNumber: string;
+    chapterHid: string;
+    readAt: Date;
+  };
 }
 
 export interface LocalChapter {

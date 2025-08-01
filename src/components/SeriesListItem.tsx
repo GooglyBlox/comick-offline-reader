@@ -11,6 +11,7 @@ import {
   Play,
   Calendar,
   MoreVertical,
+  Clock,
 } from "lucide-react";
 import { useState } from "react";
 import { useRouter } from "next/navigation";
@@ -79,6 +80,12 @@ export function SeriesListItem({
                   {series.translatorPreferences.primary}
                 </span>
               </div>
+              {series.lastReadChapter && (
+                <div className="flex items-center gap-1 text-blue-400">
+                  <Clock size={12} />
+                  <span>Last: Ch. {series.lastReadChapter.chapterNumber}</span>
+                </div>
+              )}
             </div>
 
             <div className="mb-2">

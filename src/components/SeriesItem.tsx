@@ -9,6 +9,7 @@ import {
   Users,
   Settings,
   MoreVertical,
+  Clock,
 } from "lucide-react";
 import { useState } from "react";
 import { useRouter } from "next/navigation";
@@ -140,11 +141,19 @@ export function SeriesItem({
           </div>
         </div>
 
-        <div className="flex items-center text-xs text-slate-500">
-          <Users size={10} className="mr-1" />
-          <span className="truncate">
-            {series.translatorPreferences.primary}
-          </span>
+        <div className="flex items-center justify-between text-xs">
+          <div className="flex items-center text-slate-500">
+            <Users size={10} className="mr-1" />
+            <span className="truncate">
+              {series.translatorPreferences.primary}
+            </span>
+          </div>
+          {series.lastReadChapter && (
+            <div className="flex items-center text-blue-400">
+              <Clock size={10} className="mr-1" />
+              <span>Ch. {series.lastReadChapter.chapterNumber}</span>
+            </div>
+          )}
         </div>
       </div>
     </div>

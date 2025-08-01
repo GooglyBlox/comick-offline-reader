@@ -17,7 +17,7 @@ import {
   RotateCcw,
 } from "lucide-react";
 import { LocalChapter } from "@/types/comick";
-import { getImage } from "@/lib/db";
+import { getImage, updateLastReadChapter } from "@/lib/db";
 import { createTouchGestureHandler } from "@/lib/touch-gestures";
 
 interface ChapterReaderProps {
@@ -62,6 +62,7 @@ export function ChapterReader({
 
   useEffect(() => {
     loadImages();
+    markAsRead();
   }, [chapter]);
 
   useEffect(() => {
@@ -74,6 +75,18 @@ export function ChapterReader({
       if (controlsTimeout) clearTimeout(controlsTimeout);
     };
   }, [showControls, readingMode, forceShowControls, controlsTimeout]);
+
+  const markAsRead = async () => {
+    try {
+      await updateLastReadChapter(
+        chapter.seriesId,
+        chapter.chapterNumber,
+        chapter.chapterHid,
+      );
+    } catch (error) {
+      console.error("Failed to mark chapter as read:", error);
+    }
+  };
 
   const loadImages = async () => {
     try {

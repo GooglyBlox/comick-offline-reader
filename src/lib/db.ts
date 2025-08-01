@@ -83,7 +83,7 @@ export async function getAllSeries(): Promise<LocalSeries[]> {
     const allSeries = await database.getAll("series");
 
     const syncedSeries = await Promise.all(
-      allSeries.map((series) => syncSeriesWithDatabase(series)),
+      allSeries.map((series) => syncSeriesWithDatabase(series))
     );
 
     return syncedSeries;
@@ -94,7 +94,7 @@ export async function getAllSeries(): Promise<LocalSeries[]> {
 }
 
 async function syncSeriesWithDatabase(
-  series: LocalSeries,
+  series: LocalSeries
 ): Promise<LocalSeries> {
   try {
     const actualChapters = await getChaptersBySeriesId(series.id);
@@ -108,7 +108,7 @@ async function syncSeriesWithDatabase(
       downloadedChapters: actualChapterNumbers,
       totalChapters: Math.max(
         series.totalChapters,
-        actualChapterNumbers.length,
+        actualChapterNumbers.length
       ),
     };
 
@@ -123,12 +123,35 @@ async function syncSeriesWithDatabase(
   }
 }
 
+export async function updateLastReadChapter(
+  seriesId: string,
+  chapterNumber: string,
+  chapterHid: string
+): Promise<void> {
+  try {
+    const series = await getSeries(seriesId);
+    if (series) {
+      const updatedSeries = {
+        ...series,
+        lastReadChapter: {
+          chapterNumber,
+          chapterHid,
+          readAt: new Date(),
+        },
+      };
+      await saveSeries(updatedSeries);
+    }
+  } catch (error) {
+    console.error("Failed to update last read chapter:", error);
+  }
+}
+
 export async function deleteSeries(id: string): Promise<void> {
   try {
     const database = await initDB();
     const tx = database.transaction(
       ["series", "chapters", "images"],
-      "readwrite",
+      "readwrite"
     );
 
     await tx.objectStore("series").delete(id);
@@ -163,7 +186,7 @@ export async function saveChapter(chapter: LocalChapter): Promise<void> {
 }
 
 export async function getChapter(
-  hid: string,
+  hid: string
 ): Promise<LocalChapter | undefined> {
   try {
     const database = await initDB();
@@ -175,7 +198,7 @@ export async function getChapter(
 }
 
 export async function getChaptersBySeriesId(
-  seriesId: string,
+  seriesId: string
 ): Promise<LocalChapter[]> {
   try {
     const database = await initDB();
