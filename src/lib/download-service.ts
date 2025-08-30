@@ -493,7 +493,7 @@ export class DownloadService {
     });
   }
 
-  async resumeDownload(resumeInfo: ResumeInfo): Promise<void> {
+  async resumeDownload(resumeInfo: ResumeInfo, startFromChapter?: number): Promise<void> {
     this.cancelled = false;
 
     try {
@@ -504,11 +504,18 @@ export class DownloadService {
         throw new Error("Series not found for resume");
       }
 
+      let chaptersToProcess = remainingChapters;
+      if (startFromChapter !== undefined) {
+        chaptersToProcess = remainingChapters.filter(
+          (chapter) => parseFloat(chapter.chap) >= startFromChapter
+        );
+      }
+
       const { futureChapters, availableChapters } =
-        this.checkFutureChapters(remainingChapters);
+        this.checkFutureChapters(chaptersToProcess);
 
       if (futureChapters.length > 0) {
-        const confirmed = await this.confirmFutureChapters(futureChapters);
+        const confirmed = await this.confirmFutureChapters(futureChapters, startFromChapter);
         if (!confirmed) {
           throw new Error("Download cancelled by user");
         }
@@ -593,7 +600,8 @@ export class DownloadService {
 
   async downloadSeries(
     slug: string,
-    translatorPreferences: TranslatorPreferences
+    translatorPreferences: TranslatorPreferences,
+    startFromChapter?: number
   ): Promise<void> {
     this.cancelled = false;
 
@@ -624,16 +632,22 @@ export class DownloadService {
         .sort((a, b) => parseFloat(a.chap) - parseFloat(b.chap));
 
       const translators = await this.getTranslatorInfo(slug);
-      const chaptersToDownload = this.selectChaptersToDownload(
+      let chaptersToDownload = this.selectChaptersToDownload(
         englishChapters,
         translatorPreferences
       );
+
+      if (startFromChapter !== undefined) {
+        chaptersToDownload = chaptersToDownload.filter(
+          (chapter) => parseFloat(chapter.chap) >= startFromChapter
+        );
+      }
 
       const { futureChapters, availableChapters } =
         this.checkFutureChapters(chaptersToDownload);
 
       if (futureChapters.length > 0) {
-        const confirmed = await this.confirmFutureChapters(futureChapters);
+        const confirmed = await this.confirmFutureChapters(futureChapters, startFromChapter);
         if (!confirmed) {
           throw new Error("Download cancelled by user");
         }
@@ -653,6 +667,7 @@ export class DownloadService {
         info: comicInfo,
         translators,
         translatorPreferences,
+        startFromChapter,
       };
 
       await saveSeries(localSeries);
@@ -732,7 +747,8 @@ export class DownloadService {
   }
 
   private async confirmFutureChapters(
-    futureChapters: Chapter[]
+    futureChapters: Chapter[],
+    startFromChapter?: number
   ): Promise<boolean> {
     const futureChaptersList = futureChapters
       .map((ch) => `Chapter ${ch.chap}`)
@@ -745,8 +761,9 @@ export class DownloadService {
 
     const timeUntilAvailable = this.formatTimeUntilAvailable(earliestRelease);
     const pluralText = futureChapters.length === 1 ? "is" : "are";
+    const startChapterText = startFromChapter ? ` (starting from chapter ${startFromChapter})` : "";
 
-    const message = `Warning: ${futureChaptersList} ${pluralText} not yet available for download.\n\nThey will be available in ${timeUntilAvailable}.\n\nDo you want to proceed with downloading the available chapters only?`;
+    const message = `Warning: ${futureChaptersList} ${pluralText} not yet available for download.\n\nThey will be available in ${timeUntilAvailable}.\n\nDo you want to proceed with downloading the available chapters only${startChapterText}?`;
 
     return confirm(message);
   }
@@ -798,7 +815,8 @@ export class DownloadService {
 
   async updateSeries(
     seriesId: string,
-    options: UpdateOptions = {}
+    options: UpdateOptions = {},
+    startFromChapter?: number
   ): Promise<UpdateResult> {
     try {
       const localSeries = await getSeries(seriesId);
@@ -826,9 +844,16 @@ export class DownloadService {
         existingChapters.map((ch) => parseFloat(ch.chapterNumber))
       );
 
-      const newChapterCandidates = englishChapters.filter(
+      let newChapterCandidates = englishChapters.filter(
         (ch) => !existingChapterNumbers.has(parseFloat(ch.chap))
       );
+
+      const effectiveStartChapter = startFromChapter ?? localSeries.startFromChapter;
+      if (effectiveStartChapter !== undefined) {
+        newChapterCandidates = newChapterCandidates.filter(
+          (ch) => parseFloat(ch.chap) >= effectiveStartChapter
+        );
+      }
 
       if (newChapterCandidates.length === 0) {
         this.updateProgress(2, 2, "No new chapters found", "setup");
@@ -844,7 +869,7 @@ export class DownloadService {
         this.checkFutureChapters(newChapters);
 
       if (futureChapters.length > 0) {
-        const confirmed = await this.confirmFutureChapters(futureChapters);
+        const confirmed = await this.confirmFutureChapters(futureChapters, effectiveStartChapter);
         if (!confirmed) {
           return { newChapters: 0, conflicts: [] };
         }

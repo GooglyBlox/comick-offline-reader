@@ -17,7 +17,7 @@ export function CacheInvalidationBanner() {
 
     const checkShouldShow = async () => {
       try {
-        const currentCacheVersion = "v1.8";
+        const currentCacheVersion = "v1.9";
         const acknowledgedVersion = localStorage.getItem(
           "cache-invalidation-acknowledged",
         );
@@ -44,7 +44,7 @@ export function CacheInvalidationBanner() {
   const handleDismiss = () => {
     setShowBanner(false);
     try {
-      localStorage.setItem("cache-invalidation-acknowledged", "v1.8");
+      localStorage.setItem("cache-invalidation-acknowledged", "v1.9");
     } catch {
       // Ignore localStorage errors
     }

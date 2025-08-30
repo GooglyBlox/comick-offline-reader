@@ -242,6 +242,7 @@ export default function Home() {
 
   const handleTranslatorSelection = async (
     preferences: TranslatorPreferences,
+    startChapter?: number
   ) => {
     try {
       setDownloading(true);
@@ -252,7 +253,7 @@ export default function Home() {
       const downloadService = new DownloadService(setDownloadProgress);
       downloadServiceRef.current = downloadService;
 
-      await downloadService.downloadSeries(currentSlug, preferences);
+      await downloadService.downloadSeries(currentSlug, preferences, startChapter);
       await loadSeries();
       setComickUrl("");
     } catch (error: any) {

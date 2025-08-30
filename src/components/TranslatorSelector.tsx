@@ -3,11 +3,11 @@
 
 import { useState, useEffect } from "react";
 import { TranslatorInfo, TranslatorPreferences } from "@/types/comick";
-import { ArrowUp, ArrowDown, Check, X } from "lucide-react";
+import { ArrowUp, ArrowDown, Check, X, BookOpen } from "lucide-react";
 
 interface TranslatorSelectorProps {
   slug: string;
-  onSelect: (preferences: TranslatorPreferences) => void;
+  onSelect: (preferences: TranslatorPreferences, startChapter?: number) => void;
   onCancel: () => void;
 }
 
@@ -21,6 +21,8 @@ export function TranslatorSelector({
   const [primary, setPrimary] = useState<string>("");
   const [backups, setBackups] = useState<string[]>([]);
   const [allowBackupOverride, setAllowBackupOverride] = useState(true);
+  const [startFromChapter, setStartFromChapter] = useState<number>(1);
+  const [availableChapters, setAvailableChapters] = useState<number[]>([]);
 
   useEffect(() => {
     loadTranslators();
@@ -35,6 +37,17 @@ export function TranslatorSelector({
         setTranslators(data);
         if (data.length > 0) {
           setPrimary(data[0].name);
+          const allChapters = new Set<number>();
+          data.forEach((translator: TranslatorInfo) => {
+            translator.chapters.forEach((chapter: number) => {
+              allChapters.add(chapter);
+            });
+          });
+          const sortedChapters = Array.from(allChapters).sort((a, b) => a - b);
+          setAvailableChapters(sortedChapters);
+          if (sortedChapters.length > 0) {
+            setStartFromChapter(sortedChapters[0]);
+          }
         }
       }
     } catch (error) {
@@ -78,7 +91,7 @@ export function TranslatorSelector({
       primary,
       backups,
       allowBackupOverride,
-    });
+    }, startFromChapter);
   };
 
   if (loading) {
@@ -107,6 +120,31 @@ export function TranslatorSelector({
         </div>
 
         <div className="space-y-6">
+          <div>
+            <label className="block text-slate-300 text-sm font-medium mb-3">
+              Start from Chapter
+            </label>
+            <div className="flex items-center gap-3 p-3 bg-slate-800/50 rounded-xl">
+              <BookOpen size={16} className="text-slate-400" />
+              <select
+                value={startFromChapter}
+                onChange={(e) => setStartFromChapter(Number(e.target.value))}
+                className="flex-1 bg-slate-700 border border-slate-600 text-white rounded-lg px-3 py-2 focus:border-blue-500 focus:outline-none"
+              >
+                {availableChapters.map((chapter) => (
+                  <option key={chapter} value={chapter}>
+                    Chapter {chapter}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div className="mt-2 p-2 bg-slate-800/30 rounded-lg">
+              <div className="text-xs text-slate-400">
+                Only chapters from {startFromChapter} onwards will be downloaded
+              </div>
+            </div>
+          </div>
+
           <div>
             <label className="block text-slate-300 text-sm font-medium mb-3">
               Primary Translator
@@ -143,8 +181,7 @@ export function TranslatorSelector({
                       {translator.name}
                     </div>
                     <div className="text-slate-400 text-sm">
-                      {translator.chapters.length} chapters, latest:{" "}
-                      {translator.latestChapter}
+                      {translator.chapters.filter(ch => ch >= startFromChapter).length} chapters available from ch. {startFromChapter}, latest: {translator.latestChapter}
                     </div>
                   </div>
                 </label>
@@ -211,8 +248,7 @@ export function TranslatorSelector({
                           {translator.name}
                         </div>
                         <div className="text-slate-400 text-sm">
-                          {translator.chapters.length} chapters, latest:{" "}
-                          {translator.latestChapter}
+                          {translator.chapters.filter(ch => ch >= startFromChapter).length} chapters available from ch. {startFromChapter}, latest: {translator.latestChapter}
                         </div>
                       </div>
 
